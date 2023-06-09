@@ -1,81 +1,137 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 
-#include <winsock2.h>
-#include<stdio.h>
-#include<stdlib.h>
-#pragma comment(lib, "ws2_32");
+#pragma comment(lib, "ws2_32.lib")
 
-#define BUFSIZE 512
+#include <WinSock2.h>
+#include <string>
+#include <iostream>
+#include <thread>
+#include <vector>
 
-void err_quit(const char* msg) {
-	LPVOID IpMsgBuf;
-	FormatMessage(
-		FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
-		NULL, WSAGetLastError(),
-		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-		(LPTSTR)&IpMsgBuf, 0, NULL);
-	exit(-1);
-}
+#define MAX_SIZE 1024
+#define MAX_CLIENT 6
 
-int main(int argc, char* argv[]) {
-	int retval;
+typedef struct socket_INFO {
+	SOCKET sck;
+	std::string user;
+}SOCKET_INFO;
 
-	//원속초기화
+std::vector<SOCKET_INFO> sck_list;
+SOCKET_INFO server_sock;
+int client_count = 0;
+
+void server_init();
+void add_client();
+void send_msg(const char* msg);
+void recv_msg(int idx);
+void del_client(int idx);
+
+int main() {
 	WSADATA wsa;
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-		return -1;
-	//MessageBox(NULL, "원속 초기화 성공", "알림", MB_OK);
 
-	while (true)
-	{
-		//socket()
-		SOCKET listen_sock = socket(AF_INET, SOCK_STREAM, 0);
-		if (listen_sock == INVALID_SOCKET) err_quit("socket()");
-		printf("소켓이 생성되었습니다\n");
-		//MessageBox(NULL, "TCP 소켓성공", "알림", MB_OK);
+	// Winsock를 초기화하는 함수. MAKEWORD(2, 2)는 Winsock의 2.2 버전을 사용하겠다는 의미.
+	// 실행에 성공하면 0을, 실패하면 그 이외의 값을 반환.
+	// 0을 반환했다는 것은 Winsock을 사용할 준비가 되었다는 의미.
+	int code = WSAStartup(MAKEWORD(2, 2), &wsa);
 
-		//bind()
-		SOCKADDR_IN serveraddr;
-		ZeroMemory(&serveraddr, sizeof(serveraddr));
-		serveraddr.sin_family = AF_INET;
-		serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
-		serveraddr.sin_port = htons(9000);
+	if (!code) {
+		server_init();
 
-		bind(listen_sock, (SOCKADDR*)&serveraddr, sizeof(serveraddr));
-		printf("Bind 완료 되었습니다.\n");
+		char buf[MAX_SIZE] = {};
+		std::string msg = "";
 
-		//listen()
-		listen(listen_sock, SOMAXCONN);
-		printf("connect 연결을 기다리는 중..\n");
+		std::thread th1(add_client);
 
-		//통신에 사용할 변수
-		SOCKET client_sock;
-		SOCKADDR_IN clientaddr;
-		int addrlen;
-		char buf[BUFSIZE + 1];
-
-		//accept()
-		addrlen = sizeof(clientaddr);
-		client_sock = accept(listen_sock, (SOCKADDR*)&clientaddr, &addrlen);
-		printf("요청을 받았습니다.\n");
-
-		//recv()
-		retval = recv(client_sock, buf, BUFSIZE, 0);
-		printf("메세지를 수신하였습니다.\n");
-
-		//받는 데이터 출력
-		buf[retval] = '\0';
-		printf("[TCP/%s:%d] %s\n",
-			inet_ntoa(clientaddr.sin_addr),
-			ntohs(clientaddr.sin_port), buf);
-
-		//closesocket
-		closesocket(listen_sock);
+		while (1) {
+			std::cin >> buf;
+			msg = server_sock.user + " : " + buf;
+			send_msg(msg.c_str());
+		}
+		th1.join();
+		closesocket(server_sock.sck);
 	}
 
-	//원속 종료
 	WSACleanup();
-	return 0;
 
+	return 0;
+}
+
+void server_init() {
+	server_sock.sck = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+	SOCKADDR_IN server_addr = {};
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(7777);
+	server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	bind(server_sock.sck, (sockaddr*)&server_addr, sizeof(server_addr));
+	listen(server_sock.sck, SOMAXCONN);
+
+	server_sock.user = "server";
+
+	std::cout << "Server On" << std::endl;
+}
+
+void add_client() {
+	while (client_count < MAX_CLIENT) {
+		SOCKADDR_IN addr = {};
+		int addrsize = sizeof(addr);
+		char buf[MAX_SIZE] = {};
+
+		ZeroMemory(&addr, addrsize);
+
+		SOCKET_INFO new_client = {};
+
+		new_client.sck = accept(server_sock.sck, (sockaddr*)&addr, &addrsize);
+		recv(new_client.sck, buf, MAX_SIZE, 0);
+		new_client.user = std::string(buf);
+
+		std::string msg = new_client.user + " 접속";
+		std::cout << msg << std::endl;
+		sck_list.push_back(new_client);
+
+		std::thread th(recv_msg, client_count);
+
+		client_count++;
+
+		send_msg(msg.c_str());
+
+		th.join();
+	}
+}
+
+void send_msg(const char* msg) {
+	for (int i = 0; i < client_count; i++) {
+		send(sck_list[i].sck, msg, MAX_SIZE, 0);
+	}
+}
+
+void recv_msg(int idx) {
+	char buf[MAX_SIZE] = {};
+	std::string msg = "";
+
+	std::cout << sck_list[idx].user << std::endl;
+
+	while (1) {
+		ZeroMemory(&buf, MAX_SIZE);
+		if (recv(sck_list[idx].sck, buf, MAX_SIZE, 0) > 0) {
+			msg = sck_list[idx].user + " : " + buf;
+			std::cout << msg << std::endl;
+			send_msg(msg.c_str());
+		}
+		else {
+			msg = sck_list[idx].user + " disconnected";
+			std::cout << msg << std::endl;
+			send_msg(msg.c_str());
+			del_client(idx);
+			return;
+		}
+	}
+}
+
+void del_client(int idx) {
+	closesocket(sck_list[idx].sck);
+	sck_list.erase(sck_list.begin() + idx);
+	client_count--;
 }

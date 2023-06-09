@@ -1,68 +1,71 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 
-#include<stdio.h>
-#include<stdlib.h>
-#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+#include <string>
 #include <iostream>
-#pragma comment(lib, "ws2_32");
+#include <thread>
 
-#define BUFSIZE 512
+#define MAX_SIZE 1024
 
-void err_quit(const char* msg) {
-	LPVOID IpMsgBuf;
-	FormatMessage(
-		FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
-		NULL, WSAGetLastError(),
-		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-		(LPTSTR)&IpMsgBuf, 0, NULL);
-	exit(-1);
+SOCKET client_sock;
+
+int chat_recv() {
+	char buf[MAX_SIZE] = {};
+	std::string msg;
+
+	while (1) {
+		ZeroMemory(&buf, MAX_SIZE);
+		if (recv(client_sock, buf, MAX_SIZE, 0) > 0) {
+			msg = buf;
+			std::cout << buf << std::endl;
+		}
+		else {
+			std::cout << "Server Off" << std::endl;
+			return -1;
+		}
+	}
 }
 
-int main(int argc, char* argv[]) {
-	//원속 초기화
+int main() {
 	WSADATA wsa;
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-		return -1;
-	//MessageBox(NULL, "원속 초기화 성공", "알림", MB_OK);
+	int code = WSAStartup(MAKEWORD(2, 2), &wsa);
+	std::string nick = "";
 
-	while (true)
-	{
-		//socket()
-		SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
-		if (sock == INVALID_SOCKET) err_quit("socket()");
-		printf("소켓이 생성되었습니다.\n");
-		//MessageBox(NULL, "TCP 소켓성공", "알림", MB_OK);
+	if (!code) {
+		std::cout << "사용할 닉네임 입력 >> ";
+		std::cin >> nick;
 
-		//connect()
-		SOCKADDR_IN serveraddr;
-		ZeroMemory(&serveraddr, sizeof(serveraddr));
-		serveraddr.sin_family = AF_INET;
-		serveraddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-		serveraddr.sin_port = htons(9000);
+		client_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 
-		connect(sock, (SOCKADDR*)&serveraddr, sizeof(serveraddr));
-		printf("connect 연결요청!!\n");
+		SOCKADDR_IN client_addr = {};
+		client_addr.sin_family = AF_INET;
+		client_addr.sin_port = htons(7777);
+		InetPton(AF_INET, TEXT("127.0.0.1"), &client_addr.sin_addr);
 
-		//서버로 보낼 스트링 설정
-		char buf[BUFSIZE + 1];
-
-		std::cin >> buf;
-
-		if (buf == "")
-		{
-			break;
+		while (1) {
+			if (!connect(client_sock, (SOCKADDR*)&client_addr, sizeof(client_addr))) {
+				std::cout << "Server Connect" << std::endl;
+				send(client_sock, nick.c_str(), nick.length(), 0);
+				break;
+			}
+			std::cout << "Connecting..." << std::endl;
 		}
-		
-		//send()
-		send(sock, buf, strlen(buf), 0);
-		std::cout << ("메세지를 보냅니다.\n");
 
-		//closesocket()
-		closesocket(sock);
+		std::thread th2(chat_recv);
+
+		char buffer[MAX_SIZE] = {};
+		while (1) {
+			std::cin >> buffer;
+			send(client_sock, buffer, strlen(buffer), 0);
+		}
+		th2.join();
+		closesocket(client_sock);
 	}
 
-	//원속 종료
 	WSACleanup();
 	return 0;
 }
